@@ -32,23 +32,31 @@ int start_server() {
     {
         puts("Connection accepted");
         printf("Socket val: %d\n", client_socket);
-         
-        memset(client_message, '\0', sizeof(client_message));
-        if(recv(client_socket, client_message, MAX, 0) < 0)
-        {
-            puts("Recv failed");
-            return 1;
+        printf("Entering message loop for client socket %d...\n", client_socket);
+
+        while(1) {
+            memset(client_message, '\0', sizeof(client_message));
+            if(recv(client_socket, client_message, MAX, 0) < 0)
+            {
+                puts("Recv failed");
+                return 1;
+            }
+
+            if (strcmp(client_message, "exit\n") == 0) {
+                printf("Message loop of socket %d exited.\n", client_socket);
+                break;
+            }
+            
+            puts("Client message received. Now sending it back...");
+            
+            if(send(client_socket, client_message, strlen(client_message), 0) < 0)
+            {
+                puts("Send failed");
+                return 1;
+            }
+            
+            puts("Message sent back to client");
         }
-        
-        puts("Client message received. Now sending it back...");
-         
-        if(send(client_socket, client_message, strlen(client_message), 0) < 0)
-        {
-            puts("Send failed");
-            return 1;
-        }
-         
-        puts("Message sent back to client");
     }
      
     if (client_socket < 0)
@@ -56,6 +64,8 @@ int start_server() {
         perror("Accept failed");
         return 1;
     }
-     
+
+    close(server_socket);
+
     return 0;
 }

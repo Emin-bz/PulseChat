@@ -5,6 +5,7 @@
 #include<string.h> 
 #include<sys/socket.h>
 #include<arpa/inet.h> 
+#include <unistd.h>
 
 #define MAX 2000
 #define PORT 8888
