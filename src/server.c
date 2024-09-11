@@ -12,6 +12,7 @@ int start_server() {
     if (server_socket == -1)
     {
         printf("Could not create socket");
+        return 1;
     }
     puts("Socket created");
     
@@ -25,8 +26,8 @@ int start_server() {
         return 1;
     }
     puts("bind done");
-    
-    listen(server_socket , 3);
+
+    listen(server_socket , MAX_CLIENT_CONNS);
     
     puts("Waiting for incoming connections...");
 
@@ -38,53 +39,65 @@ int start_server() {
     while( (client_socket = accept(server_socket, (struct sockaddr *)&client_addr, (socklen_t*)&c)) ) {
         if (chatroom_counter >= MAX_CLIENT_CONNS) {
             printf("Maximum number of client connections reached. Cannot create a new chat room for client %d", client_socket);
+            close(client_socket);
             continue;
         }
 
-        uint32_t room_id = rand();
-        chatrooms[chatroom_counter] = (chatroom) {.id = room_id, .alive = 0, .runner_space = &tids[chatroom_counter]};
+        uint32_t room_id = chatroom_id_counter++;
+        chatrooms[chatroom_counter] = (chatroom) {.id = room_id, .alive = 1, .runner_space = &tids[chatroom_counter]};
         
-        client_connection_args args;
-        args.server_socket = server_socket;
-        args.socket_addr_struct_size = c;
-        args.client_socket = client_socket;
-        args.client_addr = client_addr;
-        pthread_create(chatrooms[chatroom_counter].runner_space, NULL, (void*) &connect_client, &args);
+        client_connection_args *args = malloc(sizeof(client_connection_args));
+        args->server_socket = server_socket;
+        args->socket_addr_struct_size = c;
+        args->client_socket = client_socket;
+        args->client_addr = client_addr;
+        args->chatroom_id = room_id;
+
+        if (pthread_create(chatrooms[chatroom_counter].runner_space, NULL, (void*) &connect_client, args) != 0) {
+            perror("pthread_create failed");
+            free(args);
+            close(client_socket);
+            continue;
+        }
         pthread_detach(*chatrooms[chatroom_counter].runner_space);
         chatroom_counter++;
     }
     
     close(server_socket);
+    free(tids);
 
     return 0;
 }
 
 
-int connect_client(client_connection_args* args) {
+int connect_client(void* arg) {
+    client_connection_args* args = (client_connection_args*)arg;
     int client_socket = args->client_socket;
     struct sockaddr_in client_address = args->client_addr;
     char client_message[MAX];
-    uint32_t chatroom_id;
+    uint32_t chatroom_id = args->chatroom_id;
 
-    chatroom_id_counter++;
-    chatroom_id = chatroom_id_counter;
+    char client_addr_str[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &client_address.sin_addr.s_addr, client_addr_str, INET_ADDRSTRLEN) == NULL) {
+        perror("inet_ntop");
+        return 1;
+    }
 
-    printf("Connection from client with socket address %d and descriptor %d accepted. Entering echo chat room %d...\n", client_address.sin_addr.s_addr, client_socket, chatroom_id);
+    printf("Connection from client with socket address %s:%d and descriptor %d accepted. Entering echo chat room %d...\n", client_addr_str, client_address.sin_port, client_socket, chatroom_id);
     
     while(1) {
         puts("Currently in message loop");
         memset(client_message, '\0', sizeof(client_message));
 
-        // recv is blocking the thread until a message is receiced, so while(1) loop is safe.
-        if(recv(client_socket, client_message, MAX, 0) <= 0)
-        {
+        // recv is blocking the thread until a message is received, so while(1) loop is safe.
+        if(recv(client_socket, client_message, MAX, 0) <= 0) {
             printf("Recv from socket %d in chat room %d failed.\n", client_socket, chatroom_id);
-            return 1;
+            break;
         }
         
         if (strcmp(client_message, "exit\n") == 0) {
             printf("Client %d exited chat room %d.\n", client_socket, chatroom_id);
-            return 0;
+            break;
         }
         
         printf("Message from client %d in chat room %d received: '%s'. Now sending it back...\n", client_socket, chatroom_id, client_message);
@@ -92,13 +105,12 @@ int connect_client(client_connection_args* args) {
         if(send(client_socket, client_message, strlen(client_message), 0) < 0) {
             printf("Send from server %d in chat room %d to client socket %d failed.\n", args->server_socket, chatroom_id, client_socket);
             close(args->server_socket);
-            return 1;
+            break;
         }
     }
 
-    if (client_socket < 0)
-    {
-        perror("Could not accept any client connection");
-        return 1;
-    }
+    close(client_socket);
+    free(args); // Free the dynamically allocated memory
+
+    return 0;
 }
